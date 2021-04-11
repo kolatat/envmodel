@@ -96,7 +96,7 @@ func gatherModels(prefix string, obj interface{}) ([]*fieldModel, error) {
 
 		model := fieldModel{
 			Name:  fieldType.Name,
-			Key:   tag.Name,
+			Key:   tag.Key,
 			Field: field,
 			Tag:   tag,
 		}

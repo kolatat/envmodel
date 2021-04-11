@@ -12,7 +12,7 @@ const (
 type TagInfo struct {
 	IsDefined bool
 
-	Name string
+	Key string
 
 	Required bool
 	Default  string
@@ -24,11 +24,13 @@ func parseTag(structTag reflect.StructTag) *TagInfo {
 	if "" == raw {
 		return &TagInfo{IsDefined: false}
 	}
+	if "-" == raw {
+		return &TagInfo{IsDefined: true, Key: "-"}
+	}
 
 	parts := strings.Split(raw, ",")
-	tag.Name = parts[0]
 
-	for _, entry := range parts[1:] {
+	for _, entry := range parts {
 		entryParts := strings.SplitN(entry, ":", 2)
 		key := entryParts[0]
 		var value string
@@ -37,6 +39,8 @@ func parseTag(structTag reflect.StructTag) *TagInfo {
 		}
 		// TODO what about unhandled cases?
 		switch key {
+		case "key":
+			tag.Key = value
 		case "required":
 			tag.Required = true
 		case "default":
@@ -48,5 +52,5 @@ func parseTag(structTag reflect.StructTag) *TagInfo {
 }
 
 func (t *TagInfo) IsIgnored() bool {
-	return "-" == t.Name
+	return "-" == t.Key
 }

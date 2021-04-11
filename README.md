@@ -72,14 +72,20 @@ package main
 import "time"
 
 type Config struct {
-	Name    string        `env:"DISPLAY"`
-	Timeout time.Duration `env:"TIMEOUT,required,default:5s"`
+	Name    string        `env:"key:DISPLAY"`
+	Timeout time.Duration `env:"required,default:5s"`
 	Wtv     interface{}   `env:"-"`
 }
 ```
 
-The `env` tag is a comma separated list of attributes. The first attribute is always the name of the environment
-variable to parse from. Use `-` as the name and the field will be ignored by the parser.
+The `env` tag is a comma separated list of attributes. Use `-` and the field will be ignored by the parser. Each
+attribute can be in the form of a flag `attribute`, or a key-pair `key:value`.
+
+- `key:{string}`  the name of the environment variable to parse from
+- `required` will throw an error if the variable is not defined and no default is given (an empty string is considered
+  defined)
+- `default:{string}` the value given here will be use in case the variable is undefined (`default` is not used if the
+  variable is defined but empty i.e `""` - the zero value will be assigned)
 
 ## References
 
