@@ -3,15 +3,8 @@ package envmodel
 import (
 	"os"
 	"reflect"
-	"regexp"
 	"strconv"
 	"strings"
-	"time"
-)
-
-var (
-	gatherRegexp  = regexp.MustCompile("([^A-Z]+|[A-Z]+[^A-Z]+|[A-Z]+)")
-	acronymRegexp = regexp.MustCompile("([A-Z]+)([A-Z][^A-Z]+)")
 )
 
 type fieldModel struct {
@@ -109,17 +102,7 @@ func gatherModels(prefix string, obj interface{}) ([]*fieldModel, error) {
 		}
 
 		if "" == model.Key {
-			words := gatherRegexp.FindAllStringSubmatch(model.Name, -1)
-			var parts []string
-			for _, words := range words {
-				if m := acronymRegexp.FindStringSubmatch(words[0]); len(m) == 3 {
-					parts = append(parts, m[1], m[2])
-				} else {
-					parts = append(parts, words[0])
-				}
-			}
-
-			model.Key = strings.ToUpper(strings.Join(parts, "_"))
+			model.Key = pascal2snake(model.Name)
 		}
 		if "" != prefix {
 			model.Key = prefix + "_" + model.Key
@@ -128,30 +111,41 @@ func gatherModels(prefix string, obj interface{}) ([]*fieldModel, error) {
 
 		// flatten struct
 		if field.Kind() == reflect.Struct {
-			// TODO skip if decoder present
-			innerPrefix := prefix
-			if !fieldType.Anonymous {
-				innerPrefix = model.Key
-			}
+			if setterFrom(field) == nil && textUnmarshaler(field) == nil && binaryUnmarshaler(field) == nil {
+				innerPrefix := prefix
+				if !fieldType.Anonymous {
+					innerPrefix = model.Key
+				}
 
-			innerModels, err := gatherModels(innerPrefix, field.Addr().Interface())
-			if err != nil {
-				return nil, err
+				innerModels, err := gatherModels(innerPrefix, field.Addr().Interface())
+				if err != nil {
+					return nil, err
+				}
+				// replace at current node
+				models = append(models[:len(models)-1], innerModels...)
+				continue
 			}
-			// replace at current node
-			models = append(models[:len(models)-1], innerModels...)
-			continue
 		}
 	}
 	return models, nil
 }
 
 func parseField(value string, field reflect.Value) error {
+	// decoder overrides
+	if s := setterFrom(field); s != nil {
+		return s.Set(value)
+	}
+	if t := textUnmarshaler(field); t != nil {
+		return t.UnmarshalText([]byte(value))
+	}
+	if b := binaryUnmarshaler(field); b != nil {
+		return b.UnmarshalBinary([]byte(value))
+	}
+
 	typ := field.Type()
+	kind := typ.Kind()
 
-	// TODO look for decoders
-
-	if typ.Kind() == reflect.Ptr {
+	if kind == reflect.Ptr {
 		typ = typ.Elem()
 		if field.IsNil() {
 			field.Set(reflect.New(typ))
@@ -159,22 +153,17 @@ func parseField(value string, field reflect.Value) error {
 		field = field.Elem()
 	}
 
-	switch typ.Kind() {
+	if err, overridden := parseOverrides(value, field); overridden {
+		return err
+	}
+
+	switch kind {
 	case reflect.String:
 		field.SetString(value)
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		var val int64
-		if field.Kind() == reflect.Int64 && typ.PkgPath() == "time" && typ.Name() == "Duration" {
-			d, err := time.ParseDuration(value)
-			if err != nil {
-				return err
-			}
-			val = int64(d)
-		} else {
-			var err error
-			if val, err = strconv.ParseInt(value, 0, typ.Bits()); err != nil {
-				return err
-			}
+		val, err := strconv.ParseInt(value, 0, typ.Bits())
+		if err != nil {
+			return err
 		}
 		field.SetInt(val)
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
