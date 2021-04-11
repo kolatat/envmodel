@@ -42,9 +42,11 @@ func Parse(obj interface{}, option ...*Option) (*Environment, error) {
 
 	for _, model := range models {
 		value, ok := os.LookupEnv(model.Key)
+		defaultFallback := false
 		if !ok && "" != model.Tag.Default {
 			value = model.Tag.Default
 			ok = true
+			defaultFallback = true
 		}
 		if !ok && model.Tag.Required {
 			return nil, &ParseError{
@@ -55,10 +57,13 @@ func Parse(obj interface{}, option ...*Option) (*Environment, error) {
 			}
 		}
 		delete(envSet, model.Key)
-		logEnv(model.Key, value, opt.Logger.Debug()).
+		l := logEnv(model.Key, value, opt.Logger.Debug()).
 			Str("fieldName", model.Name).
-			Str("fieldType", model.Field.Type().String()).
-			Msg("parsing field")
+			Str("fieldType", model.Field.Type().String())
+		if defaultFallback {
+			l.Bool("defaultFallback", true)
+		}
+		l.Msg("parsing field")
 		if "" == value {
 			continue
 		}
