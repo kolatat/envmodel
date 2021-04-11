@@ -1,6 +1,7 @@
 package envmodel
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 )
@@ -16,6 +17,8 @@ type TagInfo struct {
 
 	Required bool
 	Default  string
+
+	errMsgs []string
 }
 
 func parseTag(structTag reflect.StructTag) *TagInfo {
@@ -37,7 +40,6 @@ func parseTag(structTag reflect.StructTag) *TagInfo {
 		if len(entryParts) > 1 {
 			value = entryParts[1]
 		}
-		// TODO what about unhandled cases?
 		switch key {
 		case "key":
 			tag.Key = value
@@ -45,6 +47,8 @@ func parseTag(structTag reflect.StructTag) *TagInfo {
 			tag.Required = true
 		case "default":
 			tag.Default = value
+		default:
+			tag.errMsgs = append(tag.errMsgs, fmt.Sprintf("unsupported attribute %q", entry))
 		}
 	}
 

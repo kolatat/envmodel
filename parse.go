@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+
+	"github.com/rs/zerolog"
 )
 
 type fieldModel struct {
@@ -24,8 +26,16 @@ func Parse(obj interface{}, option ...*Option) (*Environment, error) {
 			return nil, err
 		}
 	}
+	envSet := make(map[string]string)
+	for _, entry := range os.Environ() {
+		kv := strings.SplitN(entry, "=", 2)
+		if "" == kv[0] {
+			continue
+		}
+		envSet[kv[0]] = kv[1]
+	}
 
-	models, err := gatherModels(opt.Namespace, obj)
+	models, err := gatherModels(opt.Namespace, obj, "", opt.Logger)
 	if err != nil {
 		return nil, err
 	}
@@ -44,6 +54,11 @@ func Parse(obj interface{}, option ...*Option) (*Environment, error) {
 				Reason:    ErrRequiredKeyUndefined,
 			}
 		}
+		delete(envSet, model.Key)
+		logEnv(model.Key, value, opt.Logger.Debug()).
+			Str("fieldName", model.Name).
+			Str("fieldType", model.Field.Type().String()).
+			Msg("parsing field")
 		if "" == value {
 			continue
 		}
@@ -59,11 +74,18 @@ func Parse(obj interface{}, option ...*Option) (*Environment, error) {
 			}
 		}
 	}
+	nsPrefix := opt.Namespace + " "
+	for key, value := range envSet {
+		if "" != opt.Namespace && !strings.HasPrefix(key, nsPrefix) {
+			continue
+		}
+		logEnv(key, value, opt.Logger.Trace()).Msg("variable unused")
+	}
 
 	return env, nil
 }
 
-func gatherModels(prefix string, obj interface{}) ([]*fieldModel, error) {
+func gatherModels(keyPrefix string, obj interface{}, objectPrefix string, logger *zerolog.Logger) ([]*fieldModel, error) {
 	objModel := reflect.ValueOf(obj)
 	if objModel.Kind() != reflect.Ptr {
 		return nil, ErrInvalidTarget
@@ -79,7 +101,13 @@ func gatherModels(prefix string, obj interface{}) ([]*fieldModel, error) {
 		field := objModel.Field(i)
 		fieldType := objType.Field(i)
 		tag := parseTag(fieldType.Tag)
+		if len(tag.errMsgs) > 0 {
+			for _, errMsg := range tag.errMsgs {
+				logger.Warn().Msgf("%s in field %s", errMsg, fieldType.Name)
+			}
+		}
 		if !field.CanSet() || tag.IsIgnored() {
+			logger.Trace().Msgf("ignoring field %s", fieldType.Name)
 			continue
 		}
 
@@ -100,24 +128,27 @@ func gatherModels(prefix string, obj interface{}) ([]*fieldModel, error) {
 			Field: field,
 			Tag:   tag,
 		}
+		if "" != objectPrefix {
+			model.Name = objectPrefix + "." + model.Name
+		}
 
 		if "" == model.Key {
-			model.Key = pascal2snake(model.Name)
+			model.Key = pascal2snake(fieldType.Name)
 		}
-		if "" != prefix {
-			model.Key = prefix + "_" + model.Key
+		if "" != keyPrefix {
+			model.Key = keyPrefix + "_" + model.Key
 		}
 		models = append(models, &model)
 
 		// flatten struct
 		if field.Kind() == reflect.Struct {
 			if setterFrom(field) == nil && textUnmarshaler(field) == nil && binaryUnmarshaler(field) == nil {
-				innerPrefix := prefix
+				innerPrefix := keyPrefix
 				if !fieldType.Anonymous {
 					innerPrefix = model.Key
 				}
 
-				innerModels, err := gatherModels(innerPrefix, field.Addr().Interface())
+				innerModels, err := gatherModels(innerPrefix, field.Addr().Interface(), model.Name, logger)
 				if err != nil {
 					return nil, err
 				}
@@ -131,6 +162,7 @@ func gatherModels(prefix string, obj interface{}) ([]*fieldModel, error) {
 }
 
 func parseField(value string, field reflect.Value) error {
+
 	// decoder overrides
 	if s := setterFrom(field); s != nil {
 		return s.Set(value)
